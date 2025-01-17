@@ -27,8 +27,8 @@
  *
  */
 
-#ifndef PGMONETA_EXT_TEST_H
-#define PGMONETA_EXT_TEST_H
+#ifndef PGMONETA_TEST1_H
+#define PGMONETA_TEST1_H
 
 #include <check.h>
 #include <stdio.h>
@@ -36,20 +36,10 @@
 #include <string.h>
 
 /**
- * Execute a shell command and capture its output
- * @param command The shell command to execute
- * @param output A buffer to store the command's output
- * @param output_size The size of the output buffer
- * @return 0 on success, -1 on error
- */
-static int
-execute_command(const char* command, char* output, size_t output_size);
-
-/**
- * Set up a suite of test cases for pgmoneta_ext
+ * Set up a suite of test cases for pgmoneta
  * @return The result
  */
 Suite*
-pgmoneta_ext_suite(void);
+pgmoneta_test1_suite(char* dir);
 
-#endif // PGMONETA_EXT_TEST_H
+#endif // PGMONETA_TEST1_H
