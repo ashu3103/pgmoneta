@@ -4442,6 +4442,30 @@ pgmoneta_token_bucket_once(struct token_bucket* tb, unsigned long tokens)
    return 1;
 }
 
+int
+pgmoneta_file_split_path(char* path, char** relative_path, char** file_name)
+{
+   char* last_slash = strrchr(path, '/');
+   if (last_slash != NULL)
+   {
+      *relative_path = strndup(path, last_slash - path);
+      *file_name = strdup(last_slash + 1);
+   }
+   else
+   {
+      *relative_path = strdup("");
+      *file_name = strdup(path);
+   }
+   if (*relative_path == NULL || *file_name == NULL)
+   {
+      free(*relative_path);
+      free(*file_name);
+      return 1;
+   }
+
+   return 0;
+}
+
 char*
 pgmoneta_format_and_append(char* buf, char* format, ...)
 {

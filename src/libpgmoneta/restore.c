@@ -899,30 +899,22 @@ pgmoneta_backup_size_incremental(int server, char* label, uint64_t* size, uint64
 {
    struct art* nodes = NULL;
    struct backup* backup = NULL;
-   struct deque* labels = NULL;
    struct json* manifest_read = NULL;
    struct json* files = NULL;
-   // struct main_configuration* config = NULL;
+   struct main_configuration* config = NULL;
    struct json_iterator *iter = NULL;
    char* manifest_path = NULL;
    uint64_t sz = 0;
    uint64_t biggest_file_sz = 0;
 
-   // config = (struct main_configuration*)shmem;
+   config = (struct main_configuration*)shmem;
    pgmoneta_art_create(&nodes);
    if (pgmoneta_workflow_nodes(server, label, nodes, &backup))
    {
       goto error;
    }
 
-   if (construct_backup_label_chain(server, label, NULL, false, &labels))
-   {
-      pgmoneta_log_error("Unable to construct chain from backup %s", label);
-      goto error;
-   }
-   pgmoneta_art_insert(nodes, NODE_LABELS, (uintptr_t)labels, ValueDeque);
-
-   // read and traverse the manifest of the incremental backup
+   // iterate through all the file entries of the manifest of incremental backup
    manifest_path = pgmoneta_get_server_backup_identifier_data(server, label);
    manifest_path = pgmoneta_append(manifest_path, "backup_manifest");
    if (pgmoneta_json_read_file(manifest_path, &manifest_read))
@@ -949,30 +941,38 @@ pgmoneta_backup_size_incremental(int server, char* label, uint64_t* size, uint64
       file_path = (char*)pgmoneta_json_get(file, "Path");
       if (pgmoneta_contains(file_path, INCREMENTAL_PREFIX)) // for incremental files get the `truncated_block_length`
       {  
-         // struct rfile* rf = NULL;
-         // uint32_t block_length = 0;
-         // char* base_file_name = NULL;
+         struct rfile* rf = NULL;
+         uint32_t block_length = 0;
+         char* relative_path = NULL;
+         char* bare_file_path = NULL;
 
-         // pgmoneta_file_basename(file_path, &base_file_name);
-         // if (rfile_create(server, label, NULL, base_file_name, backup, &rf))
-         // {
-         //    pgmoneta_log_error("Unable to create rfile %s", base_file_name);
-         //    goto error;
-         // }
-         // block_length = find_reconstructed_block_length(rf);
-         // if (block_length == 0)
-         // {
-         //    pgmoneta_log_error("Unable to find block length for %s", base_file_name);
-         //    goto error;
-         // }
-         // file_size = block_length * config->common.servers[server].block_size;
-         // rfile_destroy(rf);
-         // free(base_file_name);
-         continue;
+         if (pgmoneta_file_split_path(file_path, &relative_path, &bare_file_path))
+         {
+            pgmoneta_log_error("Unable to split path %s", file_path);
+            free(relative_path);
+            free(bare_file_path);
+            goto error;
+         }
+
+         if (incremental_rfile_initialize(server, label, relative_path, bare_file_path, backup, &rf))
+         {
+            pgmoneta_log_error("Unable to initialize rfile %s", file_path);
+            goto error;
+         }
+         block_length = find_reconstructed_block_length(rf);
+         if (block_length == 0)
+         {
+            pgmoneta_log_error("Unable to find block length for %s", file_path);
+            goto error;
+         }
+         file_size = block_length * config->common.servers[server].block_size;
+         rfile_destroy(rf);
+         free(relative_path);
+         free(bare_file_path);
       }
       else // for non-incremental files get the file size from manifest itself
       {
-         pgmoneta_log_info("File size: %d", file_size);
+         file_size = (uint64_t)pgmoneta_json_get(file, "Size");
       }
 
       if (file_size > biggest_file_sz)
@@ -986,12 +986,9 @@ pgmoneta_backup_size_incremental(int server, char* label, uint64_t* size, uint64
    *size = sz;
    *biggest_file_size = biggest_file_sz;
 
-   pgmoneta_log_info("Finish calculating size inside");
-
    pgmoneta_json_destroy(manifest_read);
    free(manifest_path);
    pgmoneta_art_destroy(nodes);
-   pgmoneta_log_info("Finish calculating size outside");
    return 0;
 
 error:
@@ -2247,6 +2244,8 @@ restore_backup_incremental(struct art* nodes)
    struct json* manifest = NULL;
    struct workflow* workflow = NULL;
    struct main_configuration* config;
+   uint64_t free_space = 0;
+   uint64_t required_space = 0;
 
    config = (struct main_configuration*)shmem;
 
@@ -2284,7 +2283,27 @@ restore_backup_incremental(struct art* nodes)
    }
    pgmoneta_art_insert(nodes, NODE_MANIFEST, (uintptr_t)manifest, ValueJSON);
 
-   //TODO: free space check during incr restore should be handled specially
+   free_space = pgmoneta_free_space(target_root_combine);
+   required_space = 
+      backup->restore_size + (pgmoneta_get_number_of_workers(server) * backup->biggest_file_size);
+   
+   if (free_space < required_space)
+   {
+      char* f = NULL;
+      char* r = NULL;
+
+      f = pgmoneta_translate_file_size(free_space);
+      r = pgmoneta_translate_file_size(required_space);
+
+      pgmoneta_log_error("Restore: Not enough disk space for %s/%s on %s (Available: %s, Required: %s)",
+                         config->common.servers[server].name, backup->label, target_root_combine, f, r);
+
+      free(f);
+      free(r);
+
+      ret = RESTORE_NO_DISK_SPACE;
+      goto error;
+   }
 
    pgmoneta_art_insert(nodes, NODE_TARGET_ROOT, (uintptr_t)target_root_combine, ValueString);
    pgmoneta_art_insert(nodes, NODE_TARGET_BASE, (uintptr_t)target_base_combine, ValueString);

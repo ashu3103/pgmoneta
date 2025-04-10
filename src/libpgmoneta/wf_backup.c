@@ -435,13 +435,11 @@ basebackup_execute(char* name, struct art* nodes)
 
    if (incremental != NULL)
    {
-      pgmoneta_log_info("About to calculate backup size");
       if (pgmoneta_backup_size_incremental(server, label, &size, &biggest_file_size))
       {
          pgmoneta_log_error("Failed to calculate backup size");
          goto error;
       }
-      pgmoneta_log_info("Finish to calculate backup size: %d", size);
       pgmoneta_update_info_unsigned_long(backup_base, INFO_RESTORE, size);
       pgmoneta_update_info_unsigned_long(backup_base, INFO_BIGGEST_FILE, biggest_file_size);
       pgmoneta_update_info_unsigned_long(backup_base, INFO_TYPE, TYPE_INCREMENTAL);

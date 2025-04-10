@@ -780,6 +780,16 @@ int
 pgmoneta_file_basename(char* path, char** basename);
 
 /**
+ * Split the file path into relative path and the bare file name
+ * @param path The file path
+ * @param relative_path [out] The resulting relative path
+ * @param file_name [out] The resulting file name
+ * @return 0 upon success, otherwise 1
+ */
+int
+pgmoneta_file_split_path(char* path, char** relative_path, char** file_name);
+
+/**
  * Get the translated size of a file
  * @param size The size
  * @return The result
