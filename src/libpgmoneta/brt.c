@@ -27,7 +27,7 @@
  */
 
 #include <art.h>
-#include <blkreftable.h>
+#include <brt.h>
 #include <pgmoneta.h>
 #include <utils.h>
 #include <wal.h>
@@ -38,7 +38,7 @@ static int brt_insert(block_ref_table* brt, block_ref_table_key key, block_ref_t
 static block_ref_table_entry* brt_lookup(block_ref_table* brt, block_ref_table_key key);
 
 static void brt_set_limit_block(block_ref_table_entry* entry, block_number limit_block);
-static void brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, block_number blocknum);
+static void brt_mark_block_modified(block_ref_table_entry* entry, block_number blocknum);
 
 int
 pgmoneta_brt_create_empty(block_ref_table** brt)
@@ -55,16 +55,6 @@ error:
     pgmoneta_art_destroy(brtab->table);
     free(brtab);
     return 1;
-}
-
-int
-pgmoneta_brt_destroy(block_ref_table* brt)
-{
-    if (brt == NULL) return 0;
-
-    pgmoneta_art_destroy(brt->table);
-    free(brt);
-    return 0;
 }
 
 int
@@ -107,8 +97,7 @@ error:
 }
 
 int
-pgmoneta_brt_mark_block_modified(block_ref_table *brt, const struct rel_file_locator *rlocator, 
-                                    enum fork_number forknum, block_number blknum)
+pgmoneta_brt_mark_block_modified(block_ref_table *brt, const struct rel_file_locator *rlocator, enum fork_number forknum, block_number blknum)
 {
     block_ref_table_entry* brt_entry = NULL;
     block_ref_table_key key = {0};
@@ -140,7 +129,7 @@ pgmoneta_brt_mark_block_modified(block_ref_table *brt, const struct rel_file_loc
 		brt_entry->chunk_data = NULL;
 	}
 
-	brt_mark_block_modified(brt_entry, forknum, blknum);
+	brt_mark_block_modified(brt_entry, blknum);
     return 0;
 
 error:
@@ -154,13 +143,11 @@ pgmoneta_brt_get_entry(block_ref_table *brtab, const struct rel_file_locator *rl
 	block_ref_table_key key = {0}; /* make sure any padding is zero */
 	block_ref_table_entry* entry;
 
-	Assert(limit_block != NULL);
-
 	memcpy(&key.rlocator, rlocator, sizeof(struct rel_file_locator));
 	key.forknum = forknum;
 	entry = brt_lookup(brtab, key);
 
-	if (entry != NULL)
+	if (entry != NULL && limit_block != NULL)
 		*limit_block = entry->limit_block;
 
 	return entry;
@@ -212,7 +199,7 @@ pgmoneta_brt_entry_get_blocks(block_ref_table_entry *entry, block_number start_b
 				{
 					block_number blkno = chunkno * BLOCKS_PER_CHUNK + i;
 					blocks[nresults++] = blkno;
-					
+
 					/* Exit if blocks array get out of space */
 					if (nresults == nblocks)
 						return nresults;
@@ -272,27 +259,29 @@ brt_insert(block_ref_table* brt, block_ref_table_key key, block_ref_table_entry*
 
     generate_art_key_from_brt_key(key, &art_key);
 
-    if ((e = pgmoneta_art_search(brt->table, art_key)) != NULL)
+    if ((e = (block_ref_table_entry*)pgmoneta_art_search(brt->table, art_key)) != NULL)
     {
         *brt_entry = e;
         *found = true;
-        return;
+		goto done;
     }
 
     /* Create an empty entry and insert it into the table */
     e = (block_ref_table_entry*)malloc(sizeof(block_ref_table_entry));
+	if (!e) goto error;
+
     e->key = key;
 
-    if (pgmoneta_art_insert(brt->table, art_key, (uintptr_t)e, ValueRef))
+    if (pgmoneta_art_insert(brt->table, art_key, (uintptr_t)e, ValueBRTEntry))
     {
         goto error;
     }
     *brt_entry = e;
-
+done:
     free(art_key);
     return 0;
-
 error:
+	free(e);
     free(art_key);
     return 1;
 }
@@ -301,9 +290,13 @@ static block_ref_table_entry*
 brt_lookup(block_ref_table* brt, block_ref_table_key key)
 {
 	char* art_key = NULL;
+	block_ref_table_entry* e = NULL;
 
     generate_art_key_from_brt_key(key, &art_key);
-    return pgmoneta_art_search(brt->table, art_key);
+    e = (block_ref_table_entry*)pgmoneta_art_search(brt->table, art_key);
+
+	free(art_key);
+	return e;
 }
 
 static void
@@ -322,7 +315,7 @@ brt_set_limit_block(block_ref_table_entry* entry, block_number limit_block)
     /* Now discard the chunks and blocks with block_number > limit_block */
 
     /* get the chunk and offset on which the limit_block resides */
-    limit_chunk = limit_block / BLOCKS_PER_CHUNK;
+    limit_chunkno = limit_block / BLOCKS_PER_CHUNK;
     limit_chunkoffset = limit_block % BLOCKS_PER_CHUNK;
 
     if (limit_chunkno >= entry->nchunks) return; /* Safety check */
@@ -358,7 +351,7 @@ brt_set_limit_block(block_ref_table_entry* entry, block_number limit_block)
 }
 
 static void
-brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, block_number blknum)
+brt_mark_block_modified(block_ref_table_entry* entry, block_number blknum)
 {
     unsigned	chunkno;
 	unsigned	chunkoffset;
@@ -367,7 +360,6 @@ brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, 
 	/* get the chunk and offset on which the modified block resides */
 	chunkno = blknum / BLOCKS_PER_CHUNK;
 	chunkoffset = blknum % BLOCKS_PER_CHUNK;
-
 	/*
 	 * If 'nchunks' isn't big enough for us to be able to represent the state
 	 * of this block, we need to enlarge our arrays.
@@ -389,8 +381,11 @@ brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, 
 		if (entry->nchunks == 0)
 		{
 			entry->chunk_size = (uint16_t*)malloc(sizeof(uint16_t) * max_chunks);
+			memset(&entry->chunk_size[entry->nchunks], 0, sizeof(uint16_t) * max_chunks);
 			entry->chunk_usage = (uint16_t*)malloc(sizeof(uint16_t) * max_chunks);
+			memset(&entry->chunk_usage[entry->nchunks], 0, sizeof(uint16_t) * max_chunks);
 			entry->chunk_data = (block_ref_table_chunk*)malloc(sizeof(block_ref_table_chunk) * max_chunks);
+			memset(&entry->chunk_data[entry->nchunks], 0, sizeof(block_ref_table_chunk) * max_chunks);
 		}
 		else
 		{
@@ -413,6 +408,7 @@ brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, 
 	if (entry->chunk_size[chunkno] == 0)
 	{
 		entry->chunk_data[chunkno] = (uint16_t*)malloc(sizeof(uint16_t) * INITIAL_ENTRIES_PER_CHUNK);
+		// memset(&entry->chunk_data[chunkno], 0, sizeof(uint16_t) * INITIAL_ENTRIES_PER_CHUNK);
 		entry->chunk_size[chunkno] = INITIAL_ENTRIES_PER_CHUNK;
 		entry->chunk_data[chunkno][0] = chunkoffset;
 		entry->chunk_usage[chunkno] = 1;
@@ -425,6 +421,7 @@ brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, 
 	 */
 	if (entry->chunk_usage[chunkno] == MAX_ENTRIES_PER_CHUNK)
 	{
+		printf("Bitmap Representation\n");
 		block_ref_table_chunk chunk = entry->chunk_data[chunkno];
 
 		chunk[chunkoffset / BLOCKS_PER_ENTRY] |=
@@ -439,8 +436,9 @@ brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, 
 	 */
 	for (i = 0; i < entry->chunk_usage[chunkno]; ++i)
 	{
-		if (entry->chunk_data[chunkno][i] == chunkoffset)
+		if (entry->chunk_data[chunkno][i] == chunkoffset) {
 			return;
+		}
 	}
 
 	/*
@@ -454,6 +452,7 @@ brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, 
 
 		/* Allocate a new chunk. */
 		newchunk = (uint16_t*)malloc(MAX_ENTRIES_PER_CHUNK * sizeof(uint16_t));
+		memset(newchunk, 0, MAX_ENTRIES_PER_CHUNK * sizeof(uint16_t));
 
 		/* Set the bit for each existing entry. */
 		for (j = 0; j < entry->chunk_usage[chunkno]; ++j)
@@ -492,4 +491,19 @@ brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, 
 	entry->chunk_data[chunkno][entry->chunk_usage[chunkno]] =
 		chunkoffset;
 	entry->chunk_usage[chunkno]++;
+}
+
+void
+pgmoneta_brt_entry_destroy(block_ref_table_entry* entry)
+{
+	unsigned chunknum = entry->nchunks;
+
+	for (int i = 0; i < chunknum; i++)
+	{
+		free(entry->chunk_data[i]);
+	}
+	free(entry->chunk_size);
+	free(entry->chunk_usage);
+	free(entry->chunk_data);
+	free(entry);
 }

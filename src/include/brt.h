@@ -177,9 +177,17 @@ pgmoneta_brt_entry_get_blocks(block_ref_table_entry *entry, block_number start_b
 
 /**
  * Destroy the brt
+ * @param brt The table to be destroyed
  */
 int
 pgmoneta_brt_destroy(block_ref_table* brt);
+
+/**
+ * Destroy the block entry (used as a callback)
+ * @param entry The entry to be destroyed
+ */
+void
+pgmoneta_brt_entry_destroy(block_ref_table_entry* entry);
 
 /****  BRT SERIALIZATION APIs *****/
 

@@ -27,6 +27,7 @@
  */
 /* pgmoneta */
 #include <art.h>
+#include <brt.h>
 #include <json.h>
 #include <utils.h>
 
@@ -40,6 +41,7 @@ static void noop_destroy_cb(uintptr_t data);
 static void free_destroy_cb(uintptr_t data);
 static void art_destroy_cb(uintptr_t data);
 static void deque_destroy_cb(uintptr_t data);
+static void brt_entry_destroy_cb(uintptr_t data);
 static void json_destroy_cb(uintptr_t data);
 static char* noop_to_string_cb(uintptr_t data, int32_t format, char* tag, int indent);
 static char* int8_to_string_cb(uintptr_t data, int32_t format, char* tag, int indent);
@@ -165,6 +167,10 @@ pgmoneta_value_create(enum value_type type, uintptr_t data, struct value** value
          val->data = data;
          val->destroy_data = art_destroy_cb;
          break;
+      case ValueBRTEntry:
+         val->data = data;
+         val->destroy_data = brt_entry_destroy_cb;
+         break;
       default:
          val->data = data;
          val->destroy_data = noop_destroy_cb;
@@ -205,6 +211,7 @@ pgmoneta_value_destroy(struct value* value)
    {
       return 0;
    }
+   if (value->type == ValueBRTEntry) printf("Value Destroy Phase (only if tree is present)\n");
    value->destroy_data(value->data);
    free(value);
    return 0;
@@ -354,6 +361,8 @@ pgmoneta_value_type_to_string(enum value_type type)
          return "ref";
       case ValueMem:
          return "mem";
+      case ValueBRTEntry:
+         return "brt_entry";
       default:
          return "unknown type";
    }
@@ -376,6 +385,12 @@ static void
 art_destroy_cb(uintptr_t data)
 {
    pgmoneta_art_destroy((struct art*) data);
+}
+
+static void
+brt_entry_destroy_cb(uintptr_t data)
+{
+   pgmoneta_brt_entry_destroy((struct block_ref_table_entry*) data);
 }
 
 static void

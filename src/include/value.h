@@ -64,6 +64,7 @@ enum value_type {
    ValueARTRef,
    ValueRef,
    ValueMem,
+   ValueBRTEntry,
 };
 
 /**
