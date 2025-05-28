@@ -132,7 +132,7 @@ pgmoneta_brt_create_empty(block_ref_table** brt);
  * @param rlocator pointer to the relfilelocator for the relation fork
  * @param forknum the fork number of the relation fork
  * @param limit_block the block number to be set as limit block
- * @returns 0 if success, otherwise 1
+ * @return 0 if success, otherwise 1
  */
 int
 pgmoneta_brt_set_limit_block(block_ref_table* brt, const struct rel_file_locator* rlocator, 
@@ -144,7 +144,7 @@ pgmoneta_brt_set_limit_block(block_ref_table* brt, const struct rel_file_locator
  * @param rlocator pointer to the relfilelocator for the relation fork
  * @param forknum the fork number of the relation fork
  * @param blknum the block number to be set as modified/used
- * @returns 0 if success, otherwise 1
+ * @return 0 if success, otherwise 1
  */
 int
 pgmoneta_brt_mark_block_modified(block_ref_table *brtab, const struct rel_file_locator *rlocator, 
@@ -156,12 +156,11 @@ pgmoneta_brt_mark_block_modified(block_ref_table *brtab, const struct rel_file_l
  * @param rlocator pointer to the relfilelocator for the relation fork
  * @param forknum the fork number of the relation fork
  * @param limit_block [out] set the limit_block from the value of entry
- * @param entry [out] The block reference entry if found, otherwise NULL
- * @returns 0 if success, otherwise 1
+ * @return entry [out] The block reference entry if found, otherwise NULL
  */
-int
+block_ref_table_entry*
 pgmoneta_brt_get_entry(block_ref_table *brtab, const struct rel_file_locator *rlocator,
-					  enum fork_number forknum, block_number *limit_block, block_ref_table_entry* entry);
+					  enum fork_number forknum, block_number *limit_block);
 
 /**
  * Get block numbers from a table entry.

@@ -35,6 +35,7 @@
 
 static void generate_art_key_from_brt_key(block_ref_table_key brt_key, char** art_key);
 static int brt_insert(block_ref_table* brt, block_ref_table_key key, block_ref_table_entry** brt_entry, bool* found);
+static block_ref_table_entry* brt_lookup(block_ref_table* brt, block_ref_table_key key);
 
 static void brt_set_limit_block(block_ref_table_entry* entry, block_number limit_block);
 static void brt_mark_block_modified(block_ref_table_entry* entry, enum fork_number forknum, block_number blocknum);
@@ -146,6 +147,108 @@ error:
     return 1;
 }
 
+block_ref_table_entry*
+pgmoneta_brt_get_entry(block_ref_table *brtab, const struct rel_file_locator *rlocator,
+					  enum fork_number forknum, block_number *limit_block)
+{
+	block_ref_table_key key = {0}; /* make sure any padding is zero */
+	block_ref_table_entry* entry;
+
+	Assert(limit_block != NULL);
+
+	memcpy(&key.rlocator, rlocator, sizeof(struct rel_file_locator));
+	key.forknum = forknum;
+	entry = brt_lookup(brtab, key);
+
+	if (entry != NULL)
+		*limit_block = entry->limit_block;
+
+	return entry;
+}
+
+int
+pgmoneta_brt_entry_get_blocks(block_ref_table_entry *entry, block_number start_blkno,
+							block_number stop_blkno, block_number *blocks, int nblocks)
+{
+	// The size of blocks is nblocks
+	uint32_t  start_chunkno;
+	uint32_t  stop_chunkno;
+	int	      nresults = 0;
+	uint16_t  usage;
+	block_ref_table_chunk data;
+	unsigned start_offset;
+	unsigned stop_offset;
+
+
+	start_chunkno = start_blkno / BLOCKS_PER_CHUNK;
+	stop_chunkno = stop_blkno / BLOCKS_PER_CHUNK;
+	/*
+		This check ensures that if the stop block number is already the first element of the new chunk or
+		is equal to InvalidBlockNumber, don't check the chunk in which the stop_blkno resides
+	*/
+	if ((stop_blkno % BLOCKS_PER_CHUNK) != 0)
+		++stop_chunkno;
+	if (stop_chunkno > entry->nchunks)
+		stop_chunkno = entry->nchunks;
+
+	for (uint32_t chunkno = start_chunkno; chunkno < stop_chunkno; ++chunkno)
+	{
+		usage = entry->chunk_usage[chunkno];
+		data = entry->chunk_data[chunkno];
+		start_offset = 0;
+		stop_offset = BLOCKS_PER_CHUNK;
+		/* Find the offset if its the start chunk or the inclusive end chunk */
+
+		if (chunkno == start_chunkno) start_offset = start_blkno % BLOCKS_PER_CHUNK;
+		if (chunkno == stop_chunkno - 1) stop_offset = stop_blkno - (chunkno * BLOCKS_PER_CHUNK);
+
+		/*Handelling different representation */
+		if (usage == MAX_ENTRIES_PER_CHUNK)
+		{
+			/* It's a bitmap, so test every relevant bit. */
+			for (unsigned i = start_offset; i < stop_offset; ++i)
+			{
+				if ((data[i / BLOCKS_PER_ENTRY] & (1 << (i % BLOCKS_PER_ENTRY))) != 0)
+				{
+					block_number blkno = chunkno * BLOCKS_PER_CHUNK + i;
+					blocks[nresults++] = blkno;
+					
+					/* Exit if blocks array get out of space */
+					if (nresults == nblocks)
+						return nresults;
+				}
+			}
+		}
+		else
+		{
+			for (unsigned i = 0; i < usage; i++)
+			{
+				if (data[i] >= start_offset && data[i] < stop_offset)
+				{
+					block_number blkno = chunkno * BLOCKS_PER_CHUNK + data[i];
+					blocks[nresults++] = blkno;
+					
+					/* Exit if blocks array get out of space */
+					if (nresults == nblocks)
+						return nresults;
+				}
+			}
+		}
+	}
+
+	return nresults;
+}
+
+int
+pgmoneta_brt_destroy(block_ref_table* brt)
+{
+	if (!brt) return 0;
+
+	pgmoneta_art_destroy(brt->table);
+	free(brt);
+	return 0;
+}
+
 static void
 generate_art_key_from_brt_key(block_ref_table_key brt_key, char** art_key)
 {
@@ -192,6 +295,15 @@ brt_insert(block_ref_table* brt, block_ref_table_key key, block_ref_table_entry*
 error:
     free(art_key);
     return 1;
+}
+
+static block_ref_table_entry*
+brt_lookup(block_ref_table* brt, block_ref_table_key key)
+{
+	char* art_key = NULL;
+
+    generate_art_key_from_brt_key(key, &art_key);
+    return pgmoneta_art_search(brt->table, art_key);
 }
 
 static void
